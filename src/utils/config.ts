@@ -36,7 +36,6 @@ export class ConfigManager {
     }
 
     return {
-      chainId: 1,
       gasLimit: 50_000,
       ...config,
     };
@@ -55,7 +54,7 @@ export class ConfigManager {
       providerUrl: process.env.PROVIDER_URL || '',
       delegatorPrivateKey: process.env.DELEGATOR_PRIVATE_KEY || '',
       sponsorPrivateKey: process.env.SPONSOR_PRIVATE_KEY,
-      chainId: process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID) : 1,
+      chainId: process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID) : undefined,
     };
 
     return new ConfigManager(config);

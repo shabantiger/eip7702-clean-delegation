@@ -1,153 +1,131 @@
 # EIP-7702 Clean Delegation
 
-A command-line tool to automatically revoke EIP-7702 delegations on Ethereum.
+A command-line tool to revoke malicious EIP-7702 delegations and atomically rescue staked tokens on Ethereum and BNB Smart Chain.
 
 ## What is EIP-7702?
 
-EIP-7702 is an Ethereum standard that allows EOAs to temporarily delegate their authority to smart contract code. This tool helps you revoke these delegations when no longer needed.
+EIP-7702 allows EOAs (regular wallets) to temporarily delegate their authority to smart contract code. Attackers abuse this to set up sweeper bots — any token that lands in your wallet is instantly stolen. This tool removes the malicious delegation and rescues your staked tokens before the sweeper can act.
+
+## How the Rescue Works
+
+The tool operates in two sponsored transactions (your compromised wallet never needs ETH):
+
+```
+TX 1 — Atomic rescue (sponsor pays gas):
+  EIP-7702 sets compromised wallet code = RescueExecutor
+  Calls compromised wallet → executor runs in its context:
+    1. Calls staking contract exit/withdraw  (msg.sender = your compromised wallet ✓)
+    2. Transfers full token balance → safe wallet
+  Tokens NEVER touch the compromised wallet — sweeper has nothing to steal.
+
+TX 2 — Revocation (sponsor pays gas):
+  EIP-7702 sets compromised wallet code = ZeroAddress
+  Malicious delegation removed.
+```
 
 ## Prerequisites
 
 - [Bun](https://bun.sh) runtime (v1.0.0 or higher)
-- An Ethereum RPC provider (QuickNode, Alchemy, Infura, etc.)
-- Private key(s) for the account(s) you want to use
+- An EVM RPC provider (QuickNode, Alchemy, Infura, NodeReal, etc.)
+- A **new safe wallet** (sponsor) with enough native gas token for 2 transactions (~0.003 BNB / ~0.005 ETH)
+- Private key of the compromised wallet
 
 ## Installation
 
-### 1. Install Bun Runtime
-
-If you don't have Bun installed:
-
 ```bash
-# macOS/Linux/WSL
-curl -fsSL https://bun.sh/install | bash
-
-# Windows (PowerShell)
-powershell -c "irm bun.sh/install.ps1 | iex"
-```
-
-### 2. Clone and Setup
-
-```bash
-# Clone the repository
 git clone https://github.com/codeesura/eip7702-clean-delegation.git
 cd eip7702-clean-delegation
-
-# Install dependencies
 bun install
 ```
 
-## Configuration
+## Setup
 
-### 1. Create Environment File
+### 1. Deploy the RescueExecutor contract (one-time)
 
-Copy the example environment file:
+Open `contracts/RescueExecutor.sol` in [Remix](https://remix.ethereum.org), compile with Solidity `^0.8.20`, and deploy to your network. Copy the deployed contract address.
+
+### 2. Find your stake calldata
+
+Run the stake inspector to automatically detect your staking positions and generate the correct calldata:
 
 ```bash
-cp .env.example .env
+bun run scripts/check-stakes.ts
 ```
 
-### 2. Configure Your Settings
+This prints your `TOKEN_CONTRACT`, `TOKEN_DECIMALS`, and `UNSTAKE_CALLDATA` values ready to paste into `.env`.
 
-Open `.env` in your favorite editor and add your configuration:
+### 3. Configure `.env`
 
 ```env
-# REQUIRED: Your Ethereum RPC Provider URL
-# Get one free from: https://quicknode.com, https://alchemy.com, or https://infura.io
-PROVIDER_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR-API-KEY
+# ── Core ──────────────────────────────────────────────────────────────────────
+PROVIDER_URL=https://your-rpc-url
 
-# REQUIRED: Private key of the account with delegations to revoke
-# Format: 0x followed by 64 hexadecimal characters
-DELEGATOR_PRIVATE_KEY=0x12345....
+# Ethereum example:  https://eth-mainnet.g.alchemy.com/v2/YOUR-KEY
+# BSC example:       https://bsc-dataseed.binance.org/
 
-# OPTIONAL: Sponsor account private key (pays gas fees instead of delegator)
-# Useful for accounts with no ETH balance
-SPONSOR_PRIVATE_KEY=0x12345....
+DELEGATOR_PRIVATE_KEY=0x...   # compromised wallet private key
+SPONSOR_PRIVATE_KEY=0x...     # new safe wallet private key (pays gas, receives tokens)
 
-# OPTIONAL: Chain ID (default: 1 for Ethereum mainnet)
-# Common values: 1 (mainnet), 11155111 (Sepolia), 17000 (Holesky)
-CHAIN_ID=1
+# Optional — auto-detected from RPC if omitted
+# 1=Ethereum, 56=BSC mainnet, 97=BSC testnet, 11155111=Sepolia
+CHAIN_ID=56
+
+# ── Rescue mode ───────────────────────────────────────────────────────────────
+RESCUE_MODE=true
+STAKING_CONTRACT=0x...        # staking/pool contract address
+UNSTAKE_CALLDATA=0x...        # from: bun run scripts/check-stakes.ts
+TOKEN_CONTRACT=0x...          # ERC-20 token address
+SAFE_ADDRESS=0x...            # destination (use your sponsor/new wallet address)
+EXECUTOR_ADDRESS=0x...        # your deployed RescueExecutor contract address
+TOKEN_DECIMALS=18
 ```
 
-### Important Notes on Private Keys
+**Security rules:**
+- Never commit `.env` to version control
+- Never share private keys
+- `SAFE_ADDRESS` should be a brand-new wallet the attacker has never seen
 
-- **Never share your private keys**
-- **Never commit `.env` file to version control**
-- Use test accounts first to verify functionality
-- Consider using hardware wallet derived keys for production
-
-## Usage
-
-### Basic Usage
-
-Run the tool to revoke delegations:
+### 4. Run
 
 ```bash
 bun start
 ```
 
-### Development Mode
+## Revoke-Only Mode
 
-Run with auto-reload for development:
+To remove a malicious delegation without rescuing staked tokens, set `RESCUE_MODE=false` (or omit it) and run:
 
 ```bash
-bun run dev
+bun start
 ```
 
+Only `PROVIDER_URL`, `DELEGATOR_PRIVATE_KEY`, and optionally `SPONSOR_PRIVATE_KEY` are required in this mode.
 
-## Example Output
+## Supported Networks
 
-### Successful Revocation
+| Network | Chain ID | Notes |
+|---|---|---|
+| Ethereum Mainnet | 1 | Full EIP-7702 support |
+| Sepolia Testnet | 11155111 | |
+| Holesky Testnet | 17000 | |
+| BSC Mainnet | 56 | BNB gas token |
+| BSC Testnet | 97 | |
 
-```
-EIP-7702 Clean Delegation Tool
-================================
+Other EIP-7702-compatible EVM chains work by setting `CHAIN_ID` and `PROVIDER_URL`.
 
-Initializing delegation manager...
-Getting account information...
-Delegator: 0x742d35Cc6634C0532925a3b844Bc9e7595f6E123
-Balance: 1.234 ETH
-Nonce: 42
-
-Creating revocation authorization...
-Authorization created successfully
-
-Executing delegation revocation...
-Delegation revoked successfully!
-Transaction: 0x3d4f5g6h7i8j9k0l1m2n3o4p5q6r7s8t9u0v1w2x3y4z5a6b7c8d9e0f1g2h3i4j
-Block: 18500000
-Gas Used: 47823
-
-Operation completed successfully!
-```
-
-### Sponsored Transaction
+## Project Structure
 
 ```
-EIP-7702 Clean Delegation Tool
-================================
-
-Initializing delegation manager...
-Getting account information...
-Delegator: 0x742d35Cc6634C0532925a3b844Bc9e7595f6E123
-Balance: 0.000 ETH
-Nonce: 42
-
-Sponsor account detected:
-Address: 0x456d78Aa9012B3456789012345678901234567890
-Balance: 5.678 ETH  
-Nonce: 13
-
-Creating revocation authorization...
-Authorization created successfully
-
-Executing sponsored delegation revocation...
-Delegation revoked successfully via sponsor!
-Transaction: 0x9k8j7h6g5f4d3s2a1z0x9c8v7b6n5m4l3k2j1h0g9f8e7d6c5b4a3s2d1f0g9h8
-Block: 18500001
-Gas Used: 47823
-
-Operation completed successfully!
+contracts/
+  RescueExecutor.sol     Deploy this once per network
+scripts/
+  check-stakes.ts        Inspect stake positions & generate calldata
+src/
+  core/
+    DelegationManager.ts Core logic — revoke & rescue
+  types/index.ts         TypeScript types
+  utils/                 Config, errors, helpers
+index.ts                 CLI entry point
 ```
 
 ## License

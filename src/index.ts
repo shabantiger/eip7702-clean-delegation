@@ -21,6 +21,8 @@ export type {
   DelegationResult,
   AuthorizationParams,
   RevocationOptions,
+  RescueConfig,
+  RescueResult,
   Provider,
   Signer,
   Authorization,
